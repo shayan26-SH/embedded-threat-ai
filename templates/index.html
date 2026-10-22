@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Edge Guard | IoT Anomaly Monitor</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, Segoe UI, sans-serif; background: #0b1220; color: #e6edf7; }
+    body { max-width: 1080px; margin: 0 auto; padding: 32px 20px; }
+    header, .toolbar, .metric-grid { display: flex; gap: 16px; align-items: center; justify-content: space-between; }
+    h1 { margin: 0; font-size: 1.7rem; } p { color: #9aabc2; line-height: 1.5; }
+    .badge, .card, .alert { background: #131e30; border: 1px solid #25344b; border-radius: 12px; }
+    .badge { padding: 8px 12px; color: #8be0b0; }
+    .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin: 22px 0; }
+    .card { padding: 18px; } .label { color: #9aabc2; font-size: .85rem; } .value { font-size: 1.5rem; margin-top: 8px; }
+    button { border: 0; border-radius: 8px; padding: 10px 14px; background: #4387f5; color: white; cursor: pointer; font-weight: 600; }
+    button.secondary { background: #25344b; } button:disabled { opacity: .5; cursor: not-allowed; }
+    .toolbar { justify-content: flex-start; margin: 24px 0; } .alert { padding: 16px; margin: 12px 0; border-left: 4px solid #f5a742; }
+    .alert small { color: #9aabc2; } .empty { color: #9aabc2; padding: 20px 0; }
+    .notice { border-left: 3px solid #4387f5; padding: 10px 14px; background: #101b2b; }
+    @media (max-width: 580px) { header { align-items: flex-start; flex-direction: column; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Edge Guard</h1>
+      <p>Local, read-only telemetry and on-device anomaly detection.</p>
+    </div>
+    <div class="badge" id="state">Connecting…</div>
+  </header>
+  <p class="notice">Containment is simulated only. This demo never stops processes or changes firewall/network settings.</p>
+  <section class="metric-grid" id="metrics" aria-live="polite"></section>
+  <div class="toolbar">
+    <button id="simulate" disabled>Simulate anomaly</button>
+    <button id="clear" class="secondary">Clear alerts</button>
+    <span id="calibration"></span>
+  </div>
+  <h2>Recent alerts</h2>
+  <section id="alerts" aria-live="polite"></section>
+  <script>
+    const metricLabels = {
+      cpu_percent: ["CPU", "%"],
+      memory_percent: ["Memory", "%"],
+      process_count: ["Processes", ""],
+      network_sent_bytes_per_sec: ["Network sent", " B/s"],
+      network_recv_bytes_per_sec: ["Network received", " B/s"]
+    };
+    const format = (key, value) => key.includes("network_")
+      ? `${Number(value).toLocaleString(undefined, {maximumFractionDigits: 0})}${metricLabels[key][1]}`
+      : `${Number(value).toFixed(key === "process_count" ? 0 : 1)}${metricLabels[key][1]}`;
+
+    async function refresh() {
+      const response = await fetch("/api/status");
+      const data = await response.json();
+      document.getElementById("state").textContent =
+        data.state === "monitoring" ? "Monitoring" : "Calibrating baseline";
+      document.getElementById("simulate").disabled = data.state !== "monitoring";
+      document.getElementById("calibration").textContent = data.state === "monitoring"
+        ? `Baseline ready (${data.baseline_size} samples)`
+        : `Learning normal behavior: ${data.baseline_samples}/${data.baseline_size} samples`;
+      document.getElementById("metrics").innerHTML = data.latest
+        ? Object.entries(metricLabels).map(([key, [label]]) =>
+            `<article class="card"><div class="label">${label}</div><div class="value">${format(key, data.latest[key])}</div></article>`
+          ).join("")
+        : '<div class="empty">Waiting for the first telemetry sample…</div>';
+      document.getElementById("alerts").innerHTML = data.alerts.length
+        ? data.alerts.map(alert => `<article class="alert">
+            <strong>${alert.source === "simulated" ? "Simulated anomaly" : "Anomaly detected"}</strong>
+            <p>${alert.response}</p><small>${new Date(alert.timestamp).toLocaleString()}</small>
+          </article>`).join("")
+        : '<div class="empty">No alerts.</div>';
+    }
+
+    document.getElementById("simulate").addEventListener("click", async () => {
+      const response = await fetch("/api/simulate", {method: "POST"});
+      const data = await response.json();
+      if (!response.ok) alert(data.error);
+      else if (!data.detected) alert("The model did not flag this sample; review the current baseline.");
+      await refresh();
+    });
+    document.getElementById("clear").addEventListener("click", async () => {
+      await fetch("/api/alerts", {method: "DELETE"});
+      await refresh();
+    });
+    refresh();
+    setInterval(refresh, 1500);
+  </script>
+</body>
+</html>
